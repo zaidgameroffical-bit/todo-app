@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Firebase To-Do App</title>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js"></script>
+
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background: #f2f2f2;
+      padding: 20px;
+    }
+    .todo-container {
+      max-width: 420px;
+      background: #fff;
+      margin: 40px auto;
+      padding: 25px;
+      border-radius: 10px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+    h2 { text-align: center; }
+    input, button {
+      width: 100%;
+      padding: 10px;
+      margin: 5px 0;
+      box-sizing: border-box;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+    }
+    button {
+      background: #007bff;
+      color: #fff;
+      border: none;
+      cursor: pointer;
+      transition: 0.3s;
+    }
+    button:hover { background: #0056b3; }
+    ul { list-style: none; padding: 0; margin-top: 15px; }
+    li {
+      background: #f9f9f9;
+      padding: 10px;
+      border-radius: 5px;
+      margin: 5px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    li.done { text-decoration: line-through; color: gray; }
+    .del {
+      color: red;
+      cursor: pointer;
+      background: none;
+      border: none;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="todo-container" id="authBox">
+    <h2>Login / Signup</h2>
+    <input type="text" id="name" placeholder="Full Name (for signup only)" />
+    <input type="email" id="email" placeholder="Email" />
+    <input type="password" id="password" placeholder="Password" />
+    <button id="signupBtn">Sign Up</button>
+    <button id="loginBtn">Login</button>
+  </div>
+
+  <div class="todo-container" id="todoBox" style="display:none;">
+    <h2>To-Do List</h2>
+    <p id="userInfo"></p>
+    <input type="text" id="taskInput" placeholder="Add new task..." />
+    <button id="addBtn">Add Task</button>
+    <ul id="taskList"></ul>
+    <button id="logoutBtn" style="background:#dc3545;">Logout</button>
+  </div>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { 
+    getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
+    signOut, onAuthStateChanged, updateProfile 
+  } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  import { 
+    getDatabase, ref, set, push, onValue, remove, update 
+  } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyCQBZtSjeApa8fJCKEWSiEchMtW6aCGJd0",
+    authDomain: "todo-f16e0.firebaseapp.com",
+    databaseURL: "https://todo-f16e0-default-rtdb.firebaseio.com",
+    projectId: "todo-f16e0",
+    storageBucket: "todo-f16e0.firebasestorage.app",
+    messagingSenderId: "215069929513",
+    appId: "1:215069929513:web:b754f9d2d0839b1acaac38",
+    measurementId: "G-WZ8859272V"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getDatabase(app);
+
+  const authBox = document.getElementById('authBox');
+  const todoBox = document.getElementById('todoBox');
+  const nameEl = document.getElementById('name');
+  const emailEl = document.getElementById('email');
+  const passEl = document.getElementById('password');
+  const signupBtn = document.getElementById('signupBtn');
+  const loginBtn = document.getElementById('loginBtn');
+  const logoutBtn = document.getElementById('logoutBtn');
+  const userInfo = document.getElementById('userInfo');
+  const taskInput = document.getElementById('taskInput');
+  const addBtn = document.getElementById('addBtn');
+  const taskList = document.getElementById('taskList');
+
+  signupBtn.onclick = async () => {
+    try {
+      const userCred = await createUserWithEmailAndPassword(auth, emailEl.value, passEl.value);
+      await updateProfile(userCred.user, { displayName: nameEl.value });
+      alert("Signup successful!");
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  loginBtn.onclick = async () => {
+    try {
+      await signInWithEmailAndPassword(auth, emailEl.value, passEl.value);
+      alert("Login successful!");
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  logoutBtn.onclick = async () => { await signOut(auth); };
+
+  onAuthStateChanged(auth, user => {
+    if (user) {
+      authBox.style.display = "none";
+      todoBox.style.display = "block";
+      userInfo.textContent = `Welcome, ${user.displayName || "User"} (${user.email})`;
+      loadTasks(user);
+    } else {
+      authBox.style.display = "block";
+      todoBox.style.display = "none";
+      taskList.innerHTML = "";
+    }
+  });
+
+  addBtn.onclick = () => {
+    const text = taskInput.value.trim();
+    const user = auth.currentUser;
+    if (!text || !user) return;
+
+    const taskRef = push(ref(db, `todos/${user.uid}`));
+    set(taskRef, { text, done: false, timestamp: Date.now() });
+    taskInput.value = "";
+  };
+
+  function loadTasks(user) {
+    const tasksRef = ref(db, `todos/${user.uid}`);
+    onValue(tasksRef, snapshot => {
+      taskList.innerHTML = "";
+      if (!snapshot.exists()) return;
+      const tasks = snapshot.val();
+      for (let key in tasks) {
+        createTaskElement(user, key, tasks[key]);
+      }
+    });
+  }
+
+  function createTaskElement(user, key, task) {
+    const li = document.createElement("li");
+    li.textContent = task.text;
+    if (task.done) li.classList.add("done");
+
+    li.onclick = () => {
+      update(ref(db, `todos/${user.uid}/${key}`), { done: !task.done });
+    };
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "del";
+    delBtn.textContent = "✖";
+    delBtn.onclick = (e) => {
+      e.stopPropagation();
+      remove(ref(db, `todos/${user.uid}/${key}`));
+    };
+
+    li.appendChild(delBtn);
+    taskList.appendChild(li);
+  }
+</script>
+
+</body>
+</html>
